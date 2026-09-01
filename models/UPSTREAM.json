@@ -1,0 +1,47 @@
+{
+  "_comment": [
+    "Provenance for the seven vendored model repositories. Entries with a",
+    "'commit' were tracked as git working trees during the campaign; entries",
+    "with a null commit were vendored as plain snapshots with no upstream",
+    "revision available.",
+    "Each directory is a subset of its upstream tree (the harness's import",
+    "closure) plus our files; models/README.md records what was kept and dropped.",
+    "experiments/common.py reads the 'commit' field when the vendored copy has",
+    "no .git, so reruns record the same provenance as the original campaign."
+  ],
+  "TimesFM-2.5": {
+    "url": "https://github.com/google-research/timesfm.git",
+    "commit": "3dae50b20d7a724981e8ea36cda75578f80dd2dc",
+    "license": "Apache-2.0"
+  },
+  "Time-MoE": {
+    "url": "https://github.com/Time-MoE/Time-MoE.git",
+    "commit": "915bfda4c78a544d62a2bec6ab22948423059236",
+    "license": "Apache-2.0"
+  },
+  "Timer-HF": {
+    "url": "https://huggingface.co/thuml/timer-base-84m",
+    "commit": "70077a71acce1b4c00d98332fcaabc694255d8e5",
+    "license": "see upstream model card"
+  },
+  "Lag-Llama": {
+    "url": "https://github.com/time-series-foundation-models/lag-llama.git",
+    "commit": "df7531a83a19b3c6a0222d703ca9bf59ef7a6ab9",
+    "license": "Apache-2.0"
+  },
+  "Toto": {
+    "url": "https://github.com/DataDog/toto",
+    "commit": null,
+    "license": "Apache-2.0"
+  },
+  "OpenLTM": {
+    "url": "https://github.com/thuml/OpenLTM",
+    "commit": null,
+    "license": "MIT"
+  },
+  "Sundial-HF": {
+    "url": "https://huggingface.co/thuml/sundial-base-128m",
+    "commit": null,
+    "license": "see upstream model card"
+  }
+}
