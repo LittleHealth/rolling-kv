@@ -270,6 +270,12 @@ class TimeMoeSparseExpertsLayer(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_experts = config.num_experts
         self.norm_topk_prob = False
+        # CUDA Graph cannot capture torch.where/nonzero because the number of
+        # tokens routed to an expert is data-dependent.  The graph runner
+        # enables this inference-only branch after the initial prefill.  It
+        # evaluates every expert on the fixed token batch and masks the
+        # unselected outputs, preserving top-k routing without dynamic shapes.
+        self.use_static_dispatch = False
 
         moe_intermediate_size = self.config.intermediate_size // self.top_k
 
@@ -308,24 +314,30 @@ class TimeMoeSparseExpertsLayer(nn.Module):
             (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device
         )
 
-        # One hot encode the selected experts to create an expert mask
-        # this will be used to easily index which expert is going to be sollicitated
-        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
+        if self.use_static_dispatch:
+            # Shapes are [tokens, hidden] for every expert, independent of the
+            # router decision.  For rolling batch=1, tokens=1, so selected
+            # experts execute the same GEMM shape as the dynamic path.
+            for expert_idx, expert_layer in enumerate(self.experts):
+                selected = (selected_experts == expert_idx).to(routing_weights.dtype)
+                expert_weight = (routing_weights * selected).sum(dim=-1, keepdim=True)
+                final_hidden_states.add_(expert_layer(hidden_states) * expert_weight)
+        else:
+            # One hot encode the selected experts to create an expert mask.
+            expert_mask = torch.nn.functional.one_hot(
+                selected_experts, num_classes=self.num_experts
+            ).permute(2, 1, 0)
 
-        # Loop over all available experts in the model and perform the computation on each expert
-        for expert_idx in range(self.num_experts):
-            expert_layer = self.experts[expert_idx]
-            idx, top_x = torch.where(expert_mask[expert_idx])
+            # Dynamic eager dispatch: compute only the tokens selected by each expert.
+            for expert_idx in range(self.num_experts):
+                expert_layer = self.experts[expert_idx]
+                idx, top_x = torch.where(expert_mask[expert_idx])
 
-            # Index the correct hidden states and compute the expert hidden state for
-            # the current expert. We need to make sure to multiply the output hidden
-            # states by `routing_weights` on the corresponding tokens (top-1 and top-2)
-            current_state = hidden_states[None, top_x].reshape(-1, hidden_dim)
-            current_hidden_states = expert_layer(current_state) * routing_weights[top_x, idx, None]
-
-            # However `index_add_` only support torch tensors for indexing so we'll use
-            # the `top_x` tensor here.
-            final_hidden_states.index_add_(0, top_x, current_hidden_states.to(hidden_states.dtype))
+                current_state = hidden_states[None, top_x].reshape(-1, hidden_dim)
+                current_hidden_states = expert_layer(current_state) * routing_weights[top_x, idx, None]
+                final_hidden_states.index_add_(
+                    0, top_x, current_hidden_states.to(hidden_states.dtype)
+                )
 
         shared_expert_output = self.shared_expert(hidden_states)
         shared_expert_output = F.sigmoid(self.shared_expert_gate(hidden_states)) * shared_expert_output
@@ -819,9 +831,15 @@ class TimeMoeModel(TimeMoePreTrainedModel):
         past_key_values_length = 0
 
         if use_cache:
-            use_legacy_cache = not isinstance(past_key_values, Cache)
+            use_legacy_cache = past_key_values is not None and not isinstance(past_key_values, Cache)
             if use_legacy_cache:
-                past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+                # Manual conversion — from_legacy_cache was removed in transformers 5.x
+                temp = DynamicCache()
+                for _li, (_k, _v) in enumerate(past_key_values):
+                    temp.update(_k, _v, _li)
+                past_key_values = temp
+            elif past_key_values is None:
+                past_key_values = DynamicCache()
             past_key_values_length = past_key_values.get_seq_length()
 
         if position_ids is None:
@@ -896,7 +914,16 @@ class TimeMoeModel(TimeMoePreTrainedModel):
 
         next_cache = None
         if use_cache:
-            next_cache = next_decoder_cache.to_legacy_cache() if use_legacy_cache else next_decoder_cache
+            if use_legacy_cache:
+                # to_legacy_cache also removed in transformers 5.x — convert manually
+                if hasattr(next_decoder_cache, 'to_legacy_cache'):
+                    next_cache = next_decoder_cache.to_legacy_cache()
+                else:
+                    next_cache = tuple(
+                        (layer.keys, layer.values) for layer in next_decoder_cache.layers
+                    )
+            else:
+                next_cache = next_decoder_cache
 
         if not return_dict:
             return tuple(
