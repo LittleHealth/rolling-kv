@@ -27,6 +27,29 @@ The vendored repositories are reduced to what the harness actually imports —
 `models/README.md` records what was kept and dropped per repository, and
 `models/UPSTREAM.json` pins each one's origin and upstream commit.
 
+## Upstream provenance
+
+Each vendored tree was re-downloaded from its upstream repository on
+2026-09-08 and verified file-by-file against the revision below. The same
+pin, plus the download date, is recorded in that model's vendor commit
+(`git log --oneline -- models/<name>` shows the vendor/implementation pair;
+`git show` on the implementation commit is the full diff of our additions).
+
+| Directory | Upstream repository | Pinned revision | Rev. date |
+| --- | --- | --- | --- |
+| `models/TimesFM-2.5` | <https://github.com/google-research/timesfm> | `3dae50b20d7a724981e8ea36cda75578f80dd2dc` | 2026-07-13 |
+| `models/Time-MoE` | <https://github.com/Time-MoE/Time-MoE> | `915bfda4c78a544d62a2bec6ab22948423059236` | 2026-03-22 |
+| `models/Lag-Llama` | <https://github.com/time-series-foundation-models/lag-llama> | `df7531a83a19b3c6a0222d703ca9bf59ef7a6ab9` | 2025-06-06 |
+| `models/Toto` | <https://github.com/DataDog/toto> | `44ea4e88852228039564aa3e76fac26aafac0803` | 2026-06-03 |
+| `models/OpenLTM` | <https://github.com/thuml/OpenLTM> | `0b3005099d380ecc00d512f72553c7fe8fccca99` | 2026-03-22 |
+| `models/Timer-HF` | <https://huggingface.co/thuml/timer-base-84m> | `70077a71acce1b4c00d98332fcaabc694255d8e5` | 2025-08-03 |
+| `models/Sundial-HF` | <https://huggingface.co/thuml/sundial-base-128m> | `3212e42564493f520593e5414af4367fc4b49226` | 2026-03-09 |
+
+Toto and OpenLTM were originally vendored as unversioned snapshots; their pins
+were recovered by matching file contents against upstream history. Timer-HF and
+Sundial-HF have no source repository — the pin is the HuggingFace checkpoint
+repository revision whose code files are vendored (weights excluded).
+
 ## The implementation
 
 Each model gets a rolling engine that owns three things: a KV ring buffer, an
@@ -97,8 +120,10 @@ directory names — `experiments/common.py` resolves each model's weights by nam
 
 `Sundial-base-128M/` and `Timer-base-84M/` must be full HuggingFace snapshots,
 not just the weights: both models ship their modelling code inside the checkpoint
-and are loaded with `trust_remote_code=True`. That is also why those two
-directories under `models/` carry no upstream source of their own.
+and are loaded with `trust_remote_code=True`. The vendor commits under
+`models/Timer-HF` and `models/Sundial-HF` mirror those code files at the pinned
+revision for reference; at runtime the code is loaded from the checkpoint
+snapshot, not from `models/`.
 
 ### Datasets
 
