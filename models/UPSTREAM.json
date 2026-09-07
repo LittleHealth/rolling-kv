@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "Provenance for the seven vendored model repositories. Every entry pins",
+    "Provenance for the nine vendored model repositories. Every entry pins",
     "the upstream revision the vendored tree was verified against, file by",
     "file, on 2026-09-08; each model's vendor commit records the same pin",
     "plus the download date. Toto and OpenLTM were originally vendored as",
@@ -17,6 +17,16 @@
   "TimesFM-2.5": {
     "url": "https://github.com/google-research/timesfm.git",
     "commit": "3dae50b20d7a724981e8ea36cda75578f80dd2dc",
+    "license": "Apache-2.0"
+  },
+  "TimesFM-3.0": {
+    "url": "https://github.com/google-research/timesfm.git",
+    "commit": "0df95ae62085a6ac0d0afd1ad40dee2e6c1356ab",
+    "license": "Apache-2.0"
+  },
+  "Timer-S1": {
+    "url": "https://huggingface.co/thuml/Timer-S1",
+    "commit": "dd92ce51c691454aa71709c0385155c2b780337d",
     "license": "Apache-2.0"
   },
   "Time-MoE": {

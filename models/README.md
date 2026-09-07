@@ -1,8 +1,8 @@
 # Model repositories
 
-Seven third-party time-series foundation models, each carrying our rolling
+Nine third-party time-series foundation models, each carrying our rolling
 KV-cache implementation. Every repository keeps its own `LICENSE` (for the
-two HuggingFace checkpoints, the model card declares it); `UPSTREAM.json`
+HuggingFace checkpoints, the model card declares it); `UPSTREAM.json`
 records the origin URL and the exact upstream revision each vendored tree
 was verified against.
 
@@ -21,6 +21,8 @@ machine — the benchmark host itself has no outbound network.
 | Repository | Rolling-cache engine | Benchmark scripts |
 | --- | --- | --- |
 | `TimesFM-2.5` | `src/timesfm/online/` | `scripts/online_benchmark/` |
+| `TimesFM-3.0` | `src/timesfm3/online/` | `scripts/online_benchmark/` |
+| `Timer-S1` | `timers1_online/` (eager-only v1: MoE routing blocks CUDA Graph, as in Time-MoE) | `scripts/online_benchmark/` |
 | `Time-MoE` | `time_moe/online/` | `scripts/online_benchmark/` |
 | `Timer-HF` | `timer_online/` | `scripts/online_benchmark/` |
 | `Sundial-HF` | `sundial_online/` | `scripts/online_benchmark/` |
@@ -52,15 +54,17 @@ tree. What that leaves per repository:
 | Repository | Kept | Dropped |
 | --- | --- | --- |
 | `TimesFM-2.5` | `src/timesfm/` torch path | TimesFM 1.0 (`v1/`), the JAX/Flax backend, examples, upstream tests |
+| `TimesFM-3.0` | `src/timesfm3/` (self-contained torch package) | its `*_test.py` files, the 1.0/2.x packages, the Flax backend |
+| `Timer-S1` | HF repo code files | weights (4 safetensors shards, ~16 GB) |
 | `Time-MoE` | `time_moe/models/`, `time_moe/online/` | trainer, dataset tooling, training entry points |
 | `Toto` | `toto2/`, `dd_unit_scaling/` | Toto 1.0 (`toto/`), the BOOM benchmark dataset, CI config |
 | `OpenLTM` | Timer-XL and the four layer modules it imports | six other model architectures, training pipeline, shell recipes |
 | `Lag-Llama` | `lag_llama/model/`, `gluon_utils/` | GluonTS estimator wrapper, training scripts, data, images |
 | `Timer-HF`, `Sundial-HF` | HF repo code files | weights (`model.safetensors`) |
 
-`Timer-HF` and `Sundial-HF` have no source repository: both models are loaded
-with `AutoModelForCausalLM.from_pretrained(..., trust_remote_code=True)`, so
-their modelling code ships inside the HuggingFace checkpoint repository. Their
+`Timer-HF`, `Sundial-HF`, and `Timer-S1` have no source repository: these models
+are loaded with `AutoModelForCausalLM.from_pretrained(..., trust_remote_code=True)`,
+so their modelling code ships inside the HuggingFace checkpoint repository. Their
 vendor commits carry that repository's code files (model card, configs,
 `modeling_*.py`) so the engines can be read against the model code they drive;
 the weights are excluded — download the checkpoint per the main `README.md`.

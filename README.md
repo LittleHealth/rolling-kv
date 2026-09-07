@@ -17,13 +17,13 @@ your own.
 
 ```
 artifact/
-├── models/        seven vendored model repos + our rolling-cache engines
+├── models/        nine vendored model repos + our rolling-cache engines
 ├── experiments/   the measurement harness (EXP-0 … EXP-5)
 └── requirements.txt
 ```
 
 The vendored repositories are reduced to what the harness actually imports —
-1.1 MB across seven models rather than the full upstream trees.
+1.8 MB across nine models rather than the full upstream trees.
 `models/README.md` records what was kept and dropped per repository, and
 `models/UPSTREAM.json` pins each one's origin and upstream commit.
 
@@ -38,17 +38,22 @@ pin, plus the download date, is recorded in that model's vendor commit
 | Directory | Upstream repository | Pinned revision | Rev. date |
 | --- | --- | --- | --- |
 | `models/TimesFM-2.5` | <https://github.com/google-research/timesfm> | `3dae50b20d7a724981e8ea36cda75578f80dd2dc` | 2026-07-13 |
+| `models/TimesFM-3.0` | <https://github.com/google-research/timesfm> | `0df95ae62085a6ac0d0afd1ad40dee2e6c1356ab` | 2026-09-04 |
 | `models/Time-MoE` | <https://github.com/Time-MoE/Time-MoE> | `915bfda4c78a544d62a2bec6ab22948423059236` | 2026-03-22 |
 | `models/Lag-Llama` | <https://github.com/time-series-foundation-models/lag-llama> | `df7531a83a19b3c6a0222d703ca9bf59ef7a6ab9` | 2025-06-06 |
 | `models/Toto` | <https://github.com/DataDog/toto> | `44ea4e88852228039564aa3e76fac26aafac0803` | 2026-06-03 |
 | `models/OpenLTM` | <https://github.com/thuml/OpenLTM> | `0b3005099d380ecc00d512f72553c7fe8fccca99` | 2026-03-22 |
 | `models/Timer-HF` | <https://huggingface.co/thuml/timer-base-84m> | `70077a71acce1b4c00d98332fcaabc694255d8e5` | 2025-08-03 |
 | `models/Sundial-HF` | <https://huggingface.co/thuml/sundial-base-128m> | `3212e42564493f520593e5414af4367fc4b49226` | 2026-03-09 |
+| `models/Timer-S1` | <https://huggingface.co/thuml/Timer-S1> | `dd92ce51c691454aa71709c0385155c2b780337d` | 2026-05-09 |
 
 Toto and OpenLTM were originally vendored as unversioned snapshots; their pins
-were recovered by matching file contents against upstream history. Timer-HF and
-Sundial-HF have no source repository — the pin is the HuggingFace checkpoint
-repository revision whose code files are vendored (weights excluded).
+were recovered by matching file contents against upstream history. Timer-HF,
+Sundial-HF, and Timer-S1 have no source repository — the pin is the HuggingFace
+checkpoint repository revision whose code files are vendored (weights excluded).
+TimesFM-3.0 pins master past the `v3.0.0` tag to pick up the upstream KV-cache
+batch-indexing fix (`03675bf`); the first seven models were verified on
+2026-09-08, the two newest were downloaded and vendored the same day.
 
 ## The implementation
 
@@ -105,8 +110,10 @@ normally need setting; the others default correctly inside a checkout.
 
 ### Checkpoints
 
-Roughly 3.4 GB in total. Download into `checkpoints/` using exactly these
-directory names — `experiments/common.py` resolves each model's weights by name:
+Roughly 21 GB in total (3.4 GB for the original seven; TimesFM-3.0 adds 1.3 GB
+and Timer-S1 16 GB). Download into `checkpoints/` using exactly these directory
+names — `experiments/common.py` resolves each model's weights by name, and the
+two newest models' gate scripts read the same layout:
 
 | Directory | Source | Used by |
 | --- | --- | --- |
@@ -117,13 +124,15 @@ directory names — `experiments/common.py` resolves each model's weights by nam
 | `Toto-2.0-313m/` | HF `Datadog/Toto-2.0-313m` | `toto2` |
 | `Timer-XL-67M/checkpoint.pth` | [Tsinghua Cloud](https://cloud.tsinghua.edu.cn/f/01c35ca13f474176be7b/), linked from `models/OpenLTM/README.md` | `timerxl` |
 | `Lag-Llama/lag-llama.ckpt` | HF `time-series-foundation-models/Lag-Llama` | `lagllama` |
+| `TimesFM-3.0/` | HF `google/timesfm-3.0-pytorch` (config + safetensors) | `TimesFM-3.0` gates |
+| `Timer-S1/` | HF `thuml/Timer-S1` (full snapshot, code + 4 shards) | `Timer-S1` gates |
 
-`Sundial-base-128M/` and `Timer-base-84M/` must be full HuggingFace snapshots,
-not just the weights: both models ship their modelling code inside the checkpoint
-and are loaded with `trust_remote_code=True`. The vendor commits under
-`models/Timer-HF` and `models/Sundial-HF` mirror those code files at the pinned
-revision for reference; at runtime the code is loaded from the checkpoint
-snapshot, not from `models/`.
+`Sundial-base-128M/`, `Timer-base-84M/`, and `Timer-S1/` must be full HuggingFace
+snapshots, not just the weights: these models ship their modelling code inside
+the checkpoint and are loaded with `trust_remote_code=True`. The vendor commits
+under `models/Timer-HF`, `models/Sundial-HF`, and `models/Timer-S1` mirror those
+code files at the pinned revision for reference; at runtime the code is loaded
+from the checkpoint snapshot, not from `models/`.
 
 ### Datasets
 
@@ -203,6 +212,32 @@ age and is deliberately unasserted. Its range is wide, and it is **non-monotone
 in cache age**, so an error bound over ages 1..K has to take the max over k
 rather than the value at K. Lag-Llama's upper end is an outlier worth knowing
 about before trusting its adaptive-policy numbers.
+
+### The two newest models (added 2026-09-08)
+
+`TimesFM-3.0` and `Timer-S1` are not wired into the EXP-0…EXP-5 harness yet;
+their gates are standalone scripts, run and passed on an A100-SXM4-40GB:
+
+```bash
+python models/TimesFM-3.0/scripts/online_benchmark/test_exactness.py --device cuda:0
+python models/Timer-S1/scripts/online_benchmark/test_exactness.py    --device cuda:0
+```
+
+| Model | dtype | T1 | T2 growing window | T3 graph | T4 | cache gap (measured) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `TimesFM-3.0` | fp32 | 1.0e-07 | 5.0e-07 | 0.0 | 1.2e-07 (ring machinery) | 0.4 – 0.8% |
+| `Timer-S1` | bf16 | 0.0 | 1.5e-02 | — (eager v1) | 2.0e-07 (RoPE rebase algebra) | 1.2 – 3.0% |
+
+Two per-model caveats, both documented in the gate scripts: the vendored
+TimesFM-3.0 forward is fp32-only (it promotes resblock inputs to fp32, which
+torch 2.5.1 rejects against bf16 weights), so its gates refuse
+`--dtype bfloat16`; and neither new model asserts recompute equivalence under
+eviction — TimesFM-3.0's post-RoPE affine qk-RMSNorm/PerDimScale and Timer-S1's
+per-dim `q_scale`/`k_scale` make attention depend on absolute positions, so the
+eviction-age gap is measured (last column), not asserted, exactly like T5.
+Timer-S1's rolling speedup in eager v1 is modest (~1.35–1.40x, launch-bound
+MoE); the CUDA-graph path needs a Time-MoE-style static dispatch and is left as
+future work.
 
 ## Experiments
 
