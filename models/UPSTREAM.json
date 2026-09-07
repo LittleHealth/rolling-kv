@@ -1,0 +1,52 @@
+{
+  "_comment": [
+    "Provenance for the seven vendored model repositories. Every entry pins",
+    "the upstream revision the vendored tree was verified against, file by",
+    "file, on 2026-09-08; each model's vendor commit records the same pin",
+    "plus the download date. Toto and OpenLTM were originally vendored as",
+    "unversioned snapshots; their pins were recovered by matching file",
+    "contents against the upstream history (Toto: the tree matches the",
+    "parent of the black-version bump; OpenLTM: the tree matches upstream",
+    "HEAD at download time).",
+    "Each directory is a subset of its upstream tree (the harness's import",
+    "closure) plus our files; models/README.md records what was kept and",
+    "dropped. experiments/common.py reads the 'commit' field when the",
+    "vendored copy has no .git, so reruns record the same provenance as the",
+    "original campaign."
+  ],
+  "TimesFM-2.5": {
+    "url": "https://github.com/google-research/timesfm.git",
+    "commit": "3dae50b20d7a724981e8ea36cda75578f80dd2dc",
+    "license": "Apache-2.0"
+  },
+  "Time-MoE": {
+    "url": "https://github.com/Time-MoE/Time-MoE.git",
+    "commit": "915bfda4c78a544d62a2bec6ab22948423059236",
+    "license": "Apache-2.0"
+  },
+  "Timer-HF": {
+    "url": "https://huggingface.co/thuml/timer-base-84m",
+    "commit": "70077a71acce1b4c00d98332fcaabc694255d8e5",
+    "license": "Apache-2.0"
+  },
+  "Lag-Llama": {
+    "url": "https://github.com/time-series-foundation-models/lag-llama.git",
+    "commit": "df7531a83a19b3c6a0222d703ca9bf59ef7a6ab9",
+    "license": "Apache-2.0"
+  },
+  "Toto": {
+    "url": "https://github.com/DataDog/toto",
+    "commit": "44ea4e88852228039564aa3e76fac26aafac0803",
+    "license": "Apache-2.0"
+  },
+  "OpenLTM": {
+    "url": "https://github.com/thuml/OpenLTM",
+    "commit": "0b3005099d380ecc00d512f72553c7fe8fccca99",
+    "license": "MIT"
+  },
+  "Sundial-HF": {
+    "url": "https://huggingface.co/thuml/sundial-base-128m",
+    "commit": "3212e42564493f520593e5414af4367fc4b49226",
+    "license": "Apache-2.0"
+  }
+}

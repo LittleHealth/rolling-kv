@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# Fetched per README.md, not committed
+/checkpoints/
+/datasets/
+
+# Harness output: JSONL records, predictions, traces, queue state
+/results/
