@@ -15,7 +15,12 @@ import json
 import math
 import warnings
 from pathlib import Path
-from typing import Any, Callable, NamedTuple, NotRequired, Optional, TypedDict
+from typing import Any, Callable, NamedTuple, Optional, TypedDict
+
+try:
+    from typing import NotRequired
+except ImportError:  # Python 3.10 compatibility for the shared GPU environment.
+    from typing_extensions import NotRequired
 
 import dd_unit_scaling as uu
 import numpy as np
