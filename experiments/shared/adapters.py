@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from common import CHECKPOINTS, MODELS, MODELS_ROOT
+from shared.common import CHECKPOINTS, MODELS, MODELS_ROOT
 
 
 def _prepend(*paths: Path) -> None:
@@ -123,6 +123,52 @@ class GraphPair:
         full.capture(preserve_target=True)
         self.module, self.cfg = module, cfg
         self.rolling_engine, self.rolling, self.full = rolling_engine, rolling, full
+
+    def _timesfm3_window(self, raw: np.ndarray | torch.Tensor | None = None) -> torch.Tensor:
+        # The TimesFM-3.0 engine is multivariate-capable and takes [B, V, L];
+        # the protocol is univariate (V=1).  A bare [B, L] would be
+        # unsqueezed to [1, B, L] by the engine, i.e. B read as variates.
+        return self._plain_window(raw).reshape(self.batch_size, 1, self.context_length)
+
+    def _init_timesfm3(self) -> None:
+        _prepend(MODELS_ROOT / "TimesFM-3.0" / "src")
+        from timesfm3.model import TimesFM3Torch
+        from timesfm3.online import RollingConfig, RollingTimesFM3Engine
+        from timesfm3.online.graph_runner import CudaGraphFullDecode, CudaGraphRollingStep
+
+        # The directory form honours config.json (use_sdpa, stitching, CPM,
+        # detrending, frozen-stats flags); the vendored forward is FP32-only.
+        module = TimesFM3Torch.from_pretrained(str(CHECKPOINTS / self.spec.checkpoint))
+        module.to(device="cuda", dtype=torch.float32)
+        module.eval()
+        cfg = RollingConfig(
+            context_length=self.context_length,
+            horizon=self.spec.horizon,
+            full_refresh_every=0,
+            batch_size=self.batch_size,
+            num_variates=1,
+            device="cuda",
+            dtype=torch.float32,
+        )
+        initial = self._timesfm3_window()
+        rolling_engine = RollingTimesFM3Engine(module, cfg)
+        if rolling_engine.nh_scratch != 0:
+            raise ValueError(
+                f"horizon {self.spec.horizon} needs {rolling_engine.nh_scratch} "
+                "scratch tokens; the CUDA Graph protocol requires none"
+            )
+        rolling_engine.full_refresh(initial)
+        rolling = CudaGraphRollingStep(rolling_engine)
+        rolling.capture(preserve_state=True)
+        full_engine = RollingTimesFM3Engine(module, cfg)
+        full_engine.full_refresh(initial)
+        full = CudaGraphFullDecode(full_engine, rolling_target=rolling)
+        full.capture(preserve_target=True)
+        self.module, self.cfg = module, cfg
+        self.rolling_engine, self.rolling, self.full = rolling_engine, rolling, full
+        # Point forecast = median quantile, as TimesFM3Forecaster reports it
+        # (ModelConfig.median_quantile_index) and as TimesFM-2.5's aridx does.
+        self.median_q_idx = rolling_engine.median_q_idx
 
     def _init_timemoe(self) -> None:
         _prepend(MODELS_ROOT / "Time-MoE")
@@ -358,6 +404,8 @@ class GraphPair:
         torch.cuda.synchronize()
 
     def format_window(self, raw: np.ndarray | torch.Tensor | None = None) -> torch.Tensor:
+        if self.model_name == "timesfm3":
+            return self._timesfm3_window(raw)
         if self.model_name == "toto2":
             return self._toto_window(raw)
         if self.model_name == "timerxl":
@@ -374,6 +422,8 @@ class GraphPair:
         value = torch.as_tensor(update, device="cuda", dtype=torch.float32).reshape(-1)
         if self.model_name in {"timesfm", "sundial", "timer"}:
             return self.rolling.step(value.reshape(self.batch_size, self.spec.s))
+        if self.model_name == "timesfm3":
+            return self.rolling.step(value.reshape(self.batch_size, 1, self.spec.s))
         if self.model_name == "timemoe":
             return self.rolling.step(value.reshape(self.batch_size))
         if self.model_name == "toto2":
@@ -385,12 +435,24 @@ class GraphPair:
             return self.rolling.step(value.reshape(self.batch_size), times)
         raise AssertionError(self.model_name)
 
+    def point_forecast(self, prediction: torch.Tensor) -> torch.Tensor:
+        """Model output -> [B, H] point forecast in original units (on device).
+
+        TimesFM-3.0 returns [B, V=1, H, num_quantiles] (frozen trend already
+        re-added); its point forecast is the median quantile.  Every other
+        model already returns point forecasts.
+        """
+        if self.model_name == "timesfm3":
+            return prediction[..., self.median_q_idx].reshape(self.batch_size, -1)
+        return prediction
+
     def prediction_numpy(self, prediction: torch.Tensor) -> np.ndarray:
+        prediction = self.point_forecast(prediction)
         flat = prediction.detach().float().cpu().numpy().reshape(self.batch_size, -1)
         return flat[:, : self.spec.horizon]
 
     def cache_tensors(self) -> list[torch.Tensor]:
-        if self.model_name == "timesfm":
+        if self.model_name in {"timesfm", "timesfm3"}:
             cache = self.rolling_engine.cache
             return [cache.key, cache.value, cache.slot_pos]
         if self.model_name in {"timemoe", "sundial", "timer"}:
@@ -410,6 +472,10 @@ class GraphPair:
             from timesfm.online import RollingTimesFMEngine
 
             return RollingTimesFMEngine(self.module, self.cfg)
+        if name == "timesfm3":
+            from timesfm3.online import RollingTimesFM3Engine
+
+            return RollingTimesFM3Engine(self.module, self.cfg)
         if name == "timemoe":
             from time_moe.online import RollingTimeMoEEngine
 
@@ -450,7 +516,7 @@ class GraphPair:
                 values, torch.zeros(self.batch_size, total, 6, device="cuda")
             )
         result = engine.full_refresh(self.format_window(raw))
-        if self.model_name == "timesfm":
+        if self.model_name in {"timesfm", "timesfm3"}:
             return engine.forecast()
         if self.model_name == "timemoe":
             return engine.forecast().reshape(self.batch_size, -1).cuda()
@@ -460,6 +526,8 @@ class GraphPair:
         value = torch.as_tensor(update, device="cuda", dtype=torch.float32).reshape(-1)
         if self.model_name == "timesfm":
             return engine.step_patch(value.reshape(self.batch_size, self.spec.s))
+        if self.model_name == "timesfm3":
+            return engine.step_patch(value.reshape(self.batch_size, 1, self.spec.s))
         if self.model_name == "timer":
             return engine.fast_update(value.reshape(self.batch_size, self.spec.s))
         if self.model_name == "timemoe":
@@ -499,6 +567,13 @@ class GraphPair:
                     autoregressive.reshape(window.shape[0], -1, self.module.q)
                 )
             return torch.cat(pieces, 1)[:, : self.spec.horizon, self.module.aridx]
+        if name == "timesfm3":
+            # Upstream TimesFM3Torch.decode (non-autoregressive, H=64 via the
+            # stitched readout of the last context patch, detrend re-added);
+            # [B, V, H, q] -> median-quantile point forecast [B, H].
+            window = self._timesfm3_window(raw)
+            out = self.module.decode(target=window, horizon=self.spec.horizon, mask=None)
+            return out[..., self.median_q_idx].reshape(window.shape[0], -1)
         if name == "timemoe":
             from time_moe.online import set_static_moe_dispatch
 
@@ -812,7 +887,7 @@ class GraphPair:
             expected = engine._decode(expected[:, None], loc, scale)
         else:
             # W1 has its more architecture-specific T2 implementation in
-            # exp0_w1.py and never reaches this generic path.
+            # exp0_gates_native.py and never reaches this generic path.
             raise NotImplementedError(f"generic append-only gate unavailable for {name}")
 
         got = got.detach().float()

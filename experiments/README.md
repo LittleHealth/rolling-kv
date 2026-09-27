@@ -1,17 +1,45 @@
 # Experiment harness
 
+Layout: model-agnostic code lives in `shared/`; anything specific to one
+checkpoint lives in a directory named after it (`timesfm/` = TimesFM-2.5,
+`timesfm3/` = TimesFM-3.0). Every entry script bootstraps `sys.path` to this
+directory, so both `PYTHONPATH=experiments python experiments/shared/x.py`
+and direct invocation work.
+
+## `shared/` — model-agnostic
+
 | File | Role |
 | --- | --- |
 | `common.py` | model/dataset registry, path resolution, append-only JSONL I/O, provenance |
-| `adapters.py` | uniform CUDA-Graph interface over all seven models |
-| `exp0_w1.py`, `exp0_all.py` | correctness gates T1–T5 |
-| `exp1_w1.py` | fixed-policy sweep |
-| `exp2_stages.py` | stage-level time decomposition |
-| `exp3_adaptive.py` | adaptive refresh policies |
-| `exp5_appendix.py` | eager vs graph, batch scaling |
+| `adapters.py` | uniform CUDA-Graph interface over all registered models |
+| `exp0_gates_native.py` | correctness gates for the natively-implemented engines (timesfm / timemoe / timesfm3) |
+| `exp0_gates_adapters.py` | correctness gates for the adapter-driven models (sundial / timer / toto2 / timerxl / lagllama) |
+| `exp1_fixed_policy_sweep.py` | fixed-policy sweep: timing + quality, any model, incl. the `--ext` staleness arm |
+| `exp2_time_attribution.py` | kernel/stage time decomposition |
+| `exp3_adaptive_refresh.py` | adaptive (drift-triggered) refresh policies |
+| `exp5_graph_batch_appendix.py` | eager vs graph, batch scaling |
 | `aggregate.py` | derived quantities, including all of EXP-4 |
-| `validate_all.py` | acceptance checks over a finished run |
-| `launch_all.py`, `launch_wave.py` | disconnect-safe queue runners |
+| `validate_all.py` | acceptance checks over a finished multi-model run |
+| `launch_all.py`, `launch_wave.py` | disconnect-safe queue runners for the seven-model campaign |
+
+## `timesfm/` — TimesFM-2.5 campaign
+
+| File | Role |
+| --- | --- |
+| `exp4_kv_divergence.py` | KV state-divergence probe + reducer (fig. cost-k / cost-v) |
+| `launch_campaign.py` | tiered B0/S1–S4 queue; `plan()` is the grid's single source of truth |
+| `validate_campaign.py` | acceptance checks for that campaign (imports `plan()`) |
+
+## `timesfm3/` — TimesFM-3.0 campaign
+
+| File | Role |
+| --- | --- |
+| `launch_campaign.py` | locked v2-protocol queue; `plan()` exported for the validator |
+| `validate_campaign.py` | acceptance checks |
+| `run_matrix0807_replay.py` | replay of the 0807 CUDA-graph refresh matrix (paper §4.5 prose) |
+| `mech_campaign.py` | mechanism experiments (Exp1/2/3 shards) |
+| `mech_aggregate.py` | aggregates mech shards into the figure numbers |
+| `mech_breakdown.py` | supplementary breakdowns for the report |
 
 ## Path resolution
 

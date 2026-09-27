@@ -158,18 +158,18 @@ export ROLLKV_CKPT=$PWD/checkpoints
 export ROLLKV_DATASETS=$PWD/datasets
 
 # correctness gates first — nothing downstream is interpretable until these pass
-python experiments/exp0_w1.py  --model timesfm    # W1 models
-python experiments/exp0_all.py --model timerxl    # W2/W3 models
+python experiments/shared/exp0_gates_native.py   --model timesfm   # native engines
+python experiments/shared/exp0_gates_adapters.py --model timerxl   # adapter-driven models
 
 # one EXP-1 grid cell: latency, then quality
-python experiments/exp1_w1.py --mode timing  --model timesfm --L 8192
-python experiments/exp1_w1.py --mode quality --model timesfm \
+python experiments/shared/exp1_fixed_policy_sweep.py --mode timing  --model timesfm --L 8192
+python experiments/shared/exp1_fixed_policy_sweep.py --mode quality --model timesfm \
     --dataset ETTh1 --window 0 --L 8192
 ```
 
 The quality mode reads its evaluation window starts from `results/manifest.json`,
-which the queue runner writes on first launch; run `launch_all.py --resume` once
-(or call `common.create_manifest`) before driving `exp1_w1.py` by hand.
+which the queue runner writes on first launch; run `shared/launch_all.py --resume` once
+(or call `common.create_manifest`) before driving `exp1_fixed_policy_sweep.py` by hand.
 
 `experiments/README.md` documents the disconnect-safe queue runner that drives a
 whole campaign, including its durable cursor and `--resume` semantics. Reruns are
@@ -243,12 +243,12 @@ future work.
 
 | Block | Question | Entry point |
 | --- | --- | --- |
-| EXP-0 | Correctness gates T1–T5: custom-vs-upstream forward, growing window, graph-vs-eager, position-remap algebra, cache gap vs age | `exp0_w1.py`, `exp0_all.py` |
-| EXP-1 | Fixed-policy sweep over model × dataset × window × context length × refresh interval K × position remap | `exp1_w1.py` |
-| EXP-2 | Stage-level time decomposition (norm / embed / attention / FFN / head / cache) | `exp2_stages.py` |
-| EXP-3 | Adaptive refresh: drift threshold × max cache age × error budget × calibration | `exp3_adaptive.py` |
-| EXP-4 | Context length vs accuracy — derived from EXP-1's K=1 runs, never run separately | `aggregate.py` |
-| EXP-5 | Appendix: eager vs graph, batch scaling, kernel-class breakdown | `exp5_appendix.py` |
+| EXP-0 | Correctness gates T1–T5: custom-vs-upstream forward, growing window, graph-vs-eager, position-remap algebra, cache gap vs age | `shared/exp0_gates_native.py`, `shared/exp0_gates_adapters.py` |
+| EXP-1 | Fixed-policy sweep over model × dataset × window × context length × refresh interval K × position remap | `shared/exp1_fixed_policy_sweep.py` |
+| EXP-2 | Stage-level time decomposition (norm / embed / attention / FFN / head / cache) | `shared/exp2_time_attribution.py` |
+| EXP-3 | Adaptive refresh: drift threshold × max cache age × error budget × calibration | `shared/exp3_adaptive_refresh.py` |
+| EXP-4 | Context length vs accuracy — derived from EXP-1's K=1 runs, never run separately | `shared/aggregate.py` |
+| EXP-5 | Appendix: eager vs graph, batch scaling, kernel-class breakdown | `shared/exp5_graph_batch_appendix.py` |
 
 All seven models pass the EXP-0 correctness gates on this tree (table above).
 Beyond that, `sundial` and `timer` have not been run through the full EXP-1/2/3

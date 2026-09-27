@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # experiments/ root
+
 import argparse
 import hashlib
 import json
@@ -16,7 +21,7 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
-from common import DATASETS, MODELS, RESULTS, json_safe, read_jsonl, write_json_atomic
+from shared.common import DATASETS, MODELS, RESULTS, json_safe, read_jsonl, write_json_atomic
 
 
 def flatten(value: Any, prefix: str = "") -> dict[str, Any]:

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # experiments/ root
+
 import argparse
 import time
 import traceback
@@ -10,8 +15,8 @@ from typing import Any, Callable
 import numpy as np
 import torch
 
-from adapters import GraphPair
-from common import (
+from shared.adapters import GraphPair
+from shared.common import (
     MODELS,
     RESULTS,
     append_jsonl,
@@ -24,7 +29,7 @@ from common import (
     read_jsonl,
     stable_policy_id,
 )
-from exp1_w1 import execute_policy, make_initial_and_updates
+from shared.exp1_fixed_policy_sweep import execute_policy, make_initial_and_updates
 
 
 def synthetic_batch(batch: int, length: int, step: int) -> tuple[np.ndarray, np.ndarray]:

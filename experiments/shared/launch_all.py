@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # experiments/ root
+
 import argparse
 import fcntl
 import json
@@ -13,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from common import (
+from shared.common import (
     DATASETS,
     MODELS,
     MODEL_WAVES,
@@ -48,7 +53,7 @@ def build_tasks(windows: int) -> list[Task]:
     for wave in ("W1", "W2", "W3"):
         models = MODEL_WAVES[wave]
         for model in models:
-            script = "exp0_w1.py" if wave == "W1" else "exp0_all.py"
+            script = "exp0_gates_native.py" if wave == "W1" else "exp0_gates_adapters.py"
             tasks.append(Task(f"{wave}_EXP0", model, command(script, "--model", model), False))
 
         for model in models:
@@ -60,7 +65,7 @@ def build_tasks(windows: int) -> list[Task]:
                             f"{wave}_EXP1_timing",
                             model,
                             command(
-                                "exp1_w1.py", "--mode", "timing", "--model", model,
+                                "exp1_fixed_policy_sweep.py", "--mode", "timing", "--model", model,
                                 "--L", length, "--pos-remap", remap,
                             ),
                         )
@@ -74,7 +79,7 @@ def build_tasks(windows: int) -> list[Task]:
                                     f"{wave}_EXP1_K1",
                                     model,
                                     command(
-                                        "exp1_w1.py", "--mode", "quality", "--model", model,
+                                        "exp1_fixed_policy_sweep.py", "--mode", "quality", "--model", model,
                                         "--dataset", dataset, "--window", window, "--L", length,
                                         "--k-set", "baseline", "--pos-remap", remap,
                                     ),
@@ -89,7 +94,7 @@ def build_tasks(windows: int) -> list[Task]:
                                     f"{wave}_EXP1_sweep",
                                     model,
                                     command(
-                                        "exp1_w1.py", "--mode", "quality", "--model", model,
+                                        "exp1_fixed_policy_sweep.py", "--mode", "quality", "--model", model,
                                         "--dataset", dataset, "--window", window, "--L", length,
                                         "--k-set", "rest", "--pos-remap", remap,
                                     ),
@@ -103,14 +108,14 @@ def build_tasks(windows: int) -> list[Task]:
                     Task(
                         f"{wave}_EXP2",
                         model,
-                        command("exp2_stages.py", "--model", model, "--L", length, "--path", "both", "--batch", 1),
+                        command("exp2_time_attribution.py", "--model", model, "--L", length, "--path", "both", "--batch", 1),
                     )
                 )
             tasks.append(
                 Task(
                     f"{wave}_EXP2",
                     model,
-                    command("exp2_stages.py", "--model", model, "--L", spec.main_length, "--path", "both", "--batch", 8),
+                    command("exp2_time_attribution.py", "--model", model, "--L", spec.main_length, "--path", "both", "--batch", 8),
                 )
             )
 
@@ -125,7 +130,7 @@ def build_tasks(windows: int) -> list[Task]:
                                 f"{wave}_EXP3",
                                 model,
                                 command(
-                                    "exp3_adaptive.py", "--model", model, "--dataset", dataset,
+                                    "exp3_adaptive_refresh.py", "--model", model, "--dataset", dataset,
                                     "--window", window, "--L", length, "--mode", "all",
                                 ),
                             )
@@ -137,7 +142,7 @@ def build_tasks(windows: int) -> list[Task]:
                     Task(
                         f"{wave}_EXP5",
                         model,
-                        command("exp5_appendix.py", "--mode", "eager-graph", "--model", model, "--batch", batch),
+                        command("exp5_graph_batch_appendix.py", "--mode", "eager-graph", "--model", model, "--batch", batch),
                     )
                 )
             if model == "sundial":
@@ -145,7 +150,7 @@ def build_tasks(windows: int) -> list[Task]:
                     Task(
                         f"{wave}_EXP5",
                         model,
-                        command("exp5_appendix.py", "--mode", "timeflow"),
+                        command("exp5_graph_batch_appendix.py", "--mode", "timeflow"),
                     )
                 )
 
@@ -242,7 +247,7 @@ def wait_for_gpu(gpu: int, seconds: int = 60) -> None:
 def run_task(task: Task, gpu: int, retries: int) -> tuple[bool, int]:
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu)
-    env["PYTHONPATH"] = str(HERE)
+    env["PYTHONPATH"] = str(HERE.parent)
     env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     for attempt in range(1, retries + 2):
         wait_for_gpu(gpu)

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # experiments/ root
+
 import json
 import random
 from collections import Counter
@@ -10,8 +15,8 @@ from typing import Any
 
 import numpy as np
 
-from common import DATASETS, MODELS, RESULTS, read_jsonl, utc_now, write_json_atomic
-from exp3_adaptive import policies
+from shared.common import DATASETS, MODELS, RESULTS, read_jsonl, utc_now, write_json_atomic
+from shared.exp3_adaptive_refresh import policies
 
 
 TERMINAL = {"ok", "unsupported", "oom", "capture_failed", "failed"}

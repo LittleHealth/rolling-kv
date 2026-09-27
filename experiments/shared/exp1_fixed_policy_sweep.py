@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # experiments/ root
+
 import argparse
 import json
 import os
@@ -13,8 +18,13 @@ from typing import Any, Callable
 import numpy as np
 import torch
 
-from adapters import GraphPair
-from common import (
+from shared.adapters import GraphPair
+
+# Results subtree for this invocation: "EXP1_sweep" normally, "EXP1_ext" under
+# the S4 staleness-extension arm (--ext).  Set once in parse_args.
+EXP1_DIRNAME = "EXP1_sweep"
+WINDOWS_KEY = "windows"
+from shared.common import (
     CHECKPOINTS,
     DATASETS,
     MODELS,
@@ -180,7 +190,7 @@ def kernel_count(fn: Callable[[], torch.Tensor]) -> int | None:
 def run_timing(args: argparse.Namespace) -> None:
     spec = MODELS[args.model]
     requested = requested_k_values(args)
-    path = RESULTS / "EXP1_sweep" / args.model / "timing.jsonl"
+    path = RESULTS / EXP1_DIRNAME / args.model / "timing.jsonl"
     completed = completed_keys(path, timing_key)
     pending = [
         k
@@ -234,7 +244,7 @@ def run_timing(args: argparse.Namespace) -> None:
     if baseline_mean is None:
         old = [
             row
-            for row in __import__("common").read_jsonl(path)
+            for row in __import__("shared.common", fromlist=["read_jsonl"]).read_jsonl(path)
             if row.get("L") == args.L
             and row.get("K") == 1
             and row.get("pos_remap") == args.pos_remap
@@ -294,9 +304,9 @@ def run_timing(args: argparse.Namespace) -> None:
 def latest_timing(
     model: str, context_length: int, pos_remap: str
 ) -> dict[int, dict[str, Any]]:
-    from common import read_jsonl
+    from shared.common import read_jsonl
 
-    path = RESULTS / "EXP1_sweep" / model / "timing.jsonl"
+    path = RESULTS / EXP1_DIRNAME / model / "timing.jsonl"
     result = {}
     for row in read_jsonl(path):
         if (
@@ -318,9 +328,22 @@ def prediction_relative_path(
 ) -> Path:
     remap = pos_remap or MODELS[model].pos_remap
     tag = "na" if remap == "n/a" else remap
-    return Path("EXP1_sweep") / model / "preds" / (
+    return Path(EXP1_DIRNAME) / model / "preds" / (
         f"{dataset}_w{window}_L{context_length}_K{k}_remap{tag}.npz"
     )
+
+
+def norm_mode(model: str) -> str:
+    """How the rolling path normalizes between refreshes (record field)."""
+    if model == "timesfm":
+        return "running_prefix_frozen"
+    if model == "timesfm3":
+        # Causal running-prefix RevIN stats (cached tokens keep their frozen
+        # normalization, new patches extend the prefix from the last refresh)
+        # plus the whole-window linear-detrend line frozen at refresh and
+        # evaluated at each new point's integer offset.
+        return "running_prefix_frozen+linear_detrend_frozen_at_refresh"
+    return "frozen_at_refresh"
 
 
 def quality_record(
@@ -350,7 +373,7 @@ def quality_record(
             "K": k,
             "tau_pts": k * spec.s if k > 0 else None,
             "pos_remap": remap,
-            "norm_mode": "running_prefix_frozen" if model == "timesfm" else "frozen_at_refresh",
+            "norm_mode": norm_mode(model),
             "adaptive_params": None,
             "policy_id": stable_policy_id(payload),
             "n_full": None,
@@ -394,12 +417,12 @@ def record_quality_failure(args: argparse.Namespace, ks: list[int], exc: BaseExc
     spec = MODELS[args.model]
     try:
         manifest = load_manifest()
-        start = int(manifest["windows"][args.dataset][args.window])
+        start = int(manifest[WINDOWS_KEY][args.dataset][args.window])
     except Exception:
         start = -1
     status = classify_failure(exc)
     reason = f"{type(exc).__name__}: {str(exc)[:1200]}"
-    path = RESULTS / "EXP1_sweep" / args.model / "records.jsonl"
+    path = RESULTS / EXP1_DIRNAME / args.model / "records.jsonl"
     for k in ks:
         row = quality_record(
             args.model, args.dataset, args.window, start, args.L, k, args.pos_remap
@@ -413,7 +436,7 @@ def record_quality_failure(args: argparse.Namespace, ks: list[int], exc: BaseExc
 def run_quality(args: argparse.Namespace) -> None:
     spec = MODELS[args.model]
     ks = requested_k_values(args)
-    path = RESULTS / "EXP1_sweep" / args.model / "records.jsonl"
+    path = RESULTS / EXP1_DIRNAME / args.model / "records.jsonl"
     completed = completed_keys(path, exp1_key)
     ks = [
         k
@@ -429,7 +452,7 @@ def run_quality(args: argparse.Namespace) -> None:
         return
 
     manifest = load_manifest()
-    start = int(manifest["windows"][args.dataset][args.window])
+    start = int(manifest[WINDOWS_KEY][args.dataset][args.window])
     series = load_series(args.dataset)
     end = start + spec.updates * spec.s + spec.horizon
     if start < args.L or end > len(series):
@@ -451,7 +474,7 @@ def run_quality(args: argparse.Namespace) -> None:
     if missing_timings:
         terminal: dict[int, dict[str, Any]] = {}
         for timing_row in read_jsonl(
-            RESULTS / "EXP1_sweep" / args.model / "timing.jsonl"
+            RESULTS / EXP1_DIRNAME / args.model / "timing.jsonl"
         ):
             if (
                 timing_row.get("L") == args.L
@@ -544,7 +567,7 @@ def run_quality(args: argparse.Namespace) -> None:
 
 def record_timing_failure(args: argparse.Namespace, exc: BaseException) -> None:
     spec = MODELS[args.model]
-    path = RESULTS / "EXP1_sweep" / args.model / "timing.jsonl"
+    path = RESULTS / EXP1_DIRNAME / args.model / "timing.jsonl"
     status = classify_failure(exc)
     reason = f"{type(exc).__name__}: {str(exc)[:1200]}"
     for k in requested_k_values(args):
@@ -604,7 +627,34 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="permit an --L outside the model spec (supplementary sweeps)",
     )
+    parser.add_argument(
+        "--ext",
+        action="store_true",
+        help=(
+            "S4 staleness-extension arm (timesfm only): U=EXT_UPDATES, K grid "
+            "EXT_K_VALUES, L in EXT_LENGTHS, datasets EXT_DATASETS, manifest "
+            "windows_ext, results under EXP1_ext/"
+        ),
+    )
     args = parser.parse_args()
+    if args.ext:
+        import dataclasses
+
+        from shared.common import EXT_DATASETS, EXT_K_VALUES, EXT_LENGTHS, EXT_UPDATES
+
+        if args.model != "timesfm":
+            parser.error("--ext is defined for timesfm only")
+        if args.mode == "quality" and args.dataset not in EXT_DATASETS:
+            parser.error(f"--ext quality datasets are {EXT_DATASETS}")
+        MODELS[args.model] = dataclasses.replace(
+            MODELS[args.model],
+            updates=EXT_UPDATES,
+            k_values=EXT_K_VALUES,
+            lengths=EXT_LENGTHS,
+        )
+        global EXP1_DIRNAME, WINDOWS_KEY
+        EXP1_DIRNAME = "EXP1_ext"
+        WINDOWS_KEY = "windows_ext"
     spec = MODELS[args.model]
     if args.k_values is not None:
         try:

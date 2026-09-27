@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # experiments/ root
+
 import argparse
 import fcntl
 import json
 from typing import Any
 
-from common import RESULTS, gpu_processes, gpu_snapshot, utc_now, write_json_atomic
-from launch_all import build_tasks, exp0_gate_ok, run_task
+from shared.common import RESULTS, gpu_processes, gpu_snapshot, utc_now, write_json_atomic
+from shared.launch_all import build_tasks, exp0_gate_ok, run_task
 
 
 def update_phase(state: dict[str, Any], phase: str, status: str) -> None:

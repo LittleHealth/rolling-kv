@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # experiments/ root
+
 import argparse
 import gc
 import time
@@ -15,8 +20,8 @@ import torch
 from torch.autograd import DeviceType
 from torch.profiler import ProfilerActivity, profile, record_function
 
-from adapters import GraphPair
-from common import MODELS, RESULTS, append_jsonl, base_record, classify_failure, read_jsonl
+from shared.adapters import GraphPair
+from shared.common import MODELS, RESULTS, append_jsonl, base_record, classify_failure, read_jsonl
 
 
 STAGES = ("S1_norm", "S2_embed", "S3_attn", "S4_ffn", "S5_head", "S6_cache")
@@ -127,7 +132,31 @@ def completed(model: str, length: int, path: str, batch: int) -> bool:
     return bool(row and row.get("status") in {"ok", "oom", "unsupported"})
 
 
-def run_path(model: str, length: int, path_name: str, batch: int) -> None:
+def kernel_name_table(prof) -> list[dict[str, Any]]:
+    """Per-kernel-name launch counts and busy time, with the class assigned.
+
+    Archived next to kernels.jsonl so the name -> class mapping behind every
+    bar is versioned and any regrouping can be recomputed without re-profiling.
+    """
+    table: dict[str, dict[str, Any]] = {}
+    for event in prof.events():
+        if (
+            event.device_type != DeviceType.CUDA
+            or event.name in STAGES
+            or event.self_device_time_total <= 0
+        ):
+            continue
+        entry = table.setdefault(
+            event.name, {"name": event.name, "class": kernel_class(event.name), "count": 0, "busy_ms": 0.0}
+        )
+        entry["count"] += 1
+        entry["busy_ms"] += float(event.self_device_time_total) / 1000.0
+    return sorted(table.values(), key=lambda item: -item["busy_ms"])
+
+
+def run_path(
+    model: str, length: int, path_name: str, batch: int, dump_names: bool = False
+) -> None:
     spec = MODELS[model]
     initial, update = synthetic_batch(batch, length, spec.s)
     pair = GraphPair(model, length, initial, pos_remap=spec.pos_remap, batch_size=batch)
@@ -225,6 +254,19 @@ def run_path(model: str, length: int, path_name: str, batch: int) -> None:
         }
     )
     append_jsonl(RESULTS / "EXP2_stages" / model / "kernels.jsonl", kernel_row)
+    if dump_names:
+        names_row = base_record("D", "EXP2", model)
+        names_row.update(
+            {
+                "L": length,
+                "batch": batch,
+                "path": path_name,
+                "method": "profiler_eager_kernel_names",
+                "classifier": "exp2_time_attribution.kernel_class",
+                "kernels": kernel_name_table(prof),
+            }
+        )
+        append_jsonl(RESULTS / "EXP2_stages" / model / "kernel_names.jsonl", names_row)
     print(
         f"EXP2 {model} L={length} batch={batch} {path_name}: "
         f"stage={stage_sum:.4f}ms graph={wall['median']:.4f}ms "
@@ -262,7 +304,7 @@ def main() -> int:
     parser.add_argument("--L", type=int, required=True)
     parser.add_argument("--path", choices=("full", "rolling", "both"), default="both")
     parser.add_argument("--batch", type=int, default=1)
-    # Mirrors exp1_w1.py: supplementary contexts run without touching
+    # Mirrors exp1_fixed_policy_sweep.py: supplementary contexts run without touching
     # spec.lengths, because launch_all.py builds its task list from that tuple
     # and only resumes while task_count matches, so widening the grid would
     # restart the main queue at index 0.
@@ -270,6 +312,12 @@ def main() -> int:
         "--allow-off-grid",
         action="store_true",
         help="permit an --L outside the model spec (supplementary sweeps)",
+    )
+    parser.add_argument(
+        "--dump-kernel-names",
+        action="store_true",
+        help="also append per-kernel-name counts/busy time and the assigned class "
+        "to kernel_names.jsonl (sidecar; kernels.jsonl is unchanged)",
     )
     args = parser.parse_args()
     if args.L not in MODELS[args.model].lengths and not args.allow_off_grid:
@@ -284,7 +332,7 @@ def main() -> int:
             print(f"EXP2 already complete: {args.model} L={args.L} {path_name} b={args.batch}")
             continue
         try:
-            run_path(args.model, args.L, path_name, args.batch)
+            run_path(args.model, args.L, path_name, args.batch, args.dump_kernel_names)
         except Exception as exc:
             traceback.print_exc()
             record_failure(args.model, args.L, path_name, args.batch, exc)

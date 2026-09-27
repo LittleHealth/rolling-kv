@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # experiments/ root
+
 import argparse
 import gc
 import traceback
@@ -11,8 +16,8 @@ from typing import Any
 import numpy as np
 import torch
 
-from adapters import GraphPair
-from common import MODELS, RESULTS, append_jsonl, base_record, classify_failure, read_jsonl
+from shared.adapters import GraphPair
+from shared.common import MODELS, RESULTS, append_jsonl, base_record, classify_failure, read_jsonl
 
 
 def make_series(length: int, seed: int = 7) -> np.ndarray:
@@ -215,7 +220,7 @@ def main() -> int:
     parser.add_argument("--model", choices=tuple(MODELS), required=True)
     args = parser.parse_args()
     if args.model in {"timesfm", "timemoe"}:
-        parser.error("W1 EXP-0 is handled by exp0_w1.py")
+        parser.error("W1 EXP-0 is handled by exp0_gates_native.py")
     if not torch.cuda.is_available():
         raise RuntimeError("EXP-0 requires CUDA")
     spec = MODELS[args.model]

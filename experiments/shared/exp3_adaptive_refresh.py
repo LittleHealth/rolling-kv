@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # experiments/ root
+
 import argparse
 import functools
 import math
@@ -13,8 +18,8 @@ from typing import Any, Iterable
 import numpy as np
 import torch
 
-from adapters import GraphPair
-from common import (
+from shared.adapters import GraphPair
+from shared.common import (
     DATASETS,
     MODELS,
     RESULTS,
@@ -29,7 +34,7 @@ from common import (
     stable_policy_id,
     write_jsonl_create_once,
 )
-from exp1_w1 import latest_timing, make_initial_and_updates, save_predictions
+from shared.exp1_fixed_policy_sweep import latest_timing, make_initial_and_updates, save_predictions
 
 
 THETAS = (0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5)
@@ -457,7 +462,7 @@ def main() -> int:
         initial, updates, targets, t_index = make_initial_and_updates(
             series, start, spec, args.L
         )
-        from exp1_w1 import prediction_relative_path
+        from shared.exp1_fixed_policy_sweep import prediction_relative_path
 
         baseline = RESULTS / prediction_relative_path(
             args.model, args.dataset, args.window, args.L, 1, spec.pos_remap

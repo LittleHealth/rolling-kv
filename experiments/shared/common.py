@@ -19,7 +19,7 @@ from typing import Any, Iterable
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 # ``env.sh`` already uses ROLLKV_RESULTS for the repository-wide results root.
 # Keep the results contract independent and offer a deliberately named override for
 # isolated smoke tests.
@@ -48,7 +48,15 @@ MODELS_ROOT = Path(
 CHECKPOINTS = Path(os.environ.get("ROLLKV_CKPT", str(ROOT / "checkpoints")))
 DATASET_ROOT = Path(os.environ.get("ROLLKV_DATASETS", str(ROOT / "datasets")))
 SEED_BASE = 20260819
-W1_MAX_FUTURE = 64 * 32 + 64
+W1_MAX_FUTURE = 64 * 32 + 64  # legacy default; window draws now pass an explicit budget
+
+# S4 staleness-extension arm (TimesFM only): pushes the turnover ratio past one
+# full window at long context.  Runs in its own results tree (EXP1_ext) with its
+# own manifest windows ("windows_ext"), never mixed with the main sweep.
+EXT_UPDATES = 512
+EXT_K_VALUES = (1, 64, 128, 256, 512, 0)
+EXT_LENGTHS = (8192, 16384)
+EXT_DATASETS = ("ETTm1", "ETTm2")
 
 
 @dataclass(frozen=True)
@@ -95,13 +103,10 @@ MODELS: dict[str, ModelSpec] = {
         checkpoint="TimesFM-2.5-200M/model.safetensors",
         s=32,
         horizon=64,
-        updates=64,
-        lengths=(512, 2048, 8192, 16384),
+        updates=128,
+        lengths=(512, 1024, 2048, 4096, 8192, 16384),
         main_length=8192,
-        k_values=(
-            1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64,
-            128, 256, 512, 1024, 0,
-        ),
+        k_values=(1, 2, 4, 8, 16, 32, 64, 0),
         dtype="float32",
         pos_remap="n/a",
         remap_values=("n/a",),
@@ -204,7 +209,71 @@ MODELS: dict[str, ModelSpec] = {
         pos_remap="n/a",
         remap_values=("n/a",),
     ),
+    # TimesFM-3.0 under the paper's (v2) TimesFM-2.5 protocol, verbatim: the
+    # v2 ``timesfm`` spec at git HEAD (U=64, main grid 512..16384, 17 K) plus
+    # the two partial contexts below.  Its own wave tag keeps it out of the
+    # seven-model W1..W3 queues (MODEL_WAVES); it runs from timesfm3/launch_campaign.py
+    # into its own results root.  H=64 equals TimesFM-3.0's stitching extract
+    # length, so the readout needs no horizon (CPM) scratch tokens.
+    "timesfm3": ModelSpec(
+        name="timesfm3",
+        display_name="TimesFM-3.0",
+        wave="TFM3",
+        repo="TimesFM-3.0",
+        checkpoint="TimesFM-3.0",
+        s=32,
+        horizon=64,
+        updates=64,
+        lengths=(512, 2048, 8192, 16384),
+        main_length=8192,
+        k_values=(
+            1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64,
+            128, 256, 512, 1024, 0,
+        ),
+        dtype="float32",
+        pos_remap="n/a",
+        remap_values=("n/a",),
+    ),
 }
+
+# ---------------------------------------------------------------------------
+# TimesFM-3.0 campaign: the locked v2 protocol, grid and windows.
+#
+# The paper's TimesFM-2.5 numbers come from the v2 campaign (U=64, H=64,
+# s=32, windows drawn with W1_MAX_FUTURE = 64*32+64).  Every TimesFM-2.5
+# result has a TimesFM-3.0 counterpart with identical settings, so these
+# constants are frozen copies of that campaign, not of the working-tree v3
+# ``timesfm`` spec.
+TFM3_MODEL = "timesfm3"
+# Partial contexts: v2 measured L=1024/4096 for four periods and four datasets
+# only (``--allow-off-grid --k-values 1,4,16,64``).
+TFM3_PARTIAL_LENGTHS = (1024, 4096)
+TFM3_PARTIAL_K_VALUES = (1, 4, 16, 64)
+TFM3_PARTIAL_DATASETS = ("ETTm1", "ETTm2", "Electricity", "Weather")
+# Correctness gates and the kernel profile cover every context that is measured.
+TFM3_ALL_LENGTHS = (512, 1024, 2048, 4096, 8192, 16384)
+TFM3_EXP2_BATCH8_LENGTH = 8192
+# Verbatim ``windows`` of the v2 manifest (results/v2/manifest.json).
+TFM3_V2_WINDOWS: dict[str, tuple[int, ...]] = {
+    "ETTh1": (15124, 14289, 14020, 15132, 13369),
+    "ETTh2": (15124, 14289, 14020, 15132, 13369),
+    "ETTm1": (59898, 67255, 58721, 59906, 51868),
+    "ETTm2": (59898, 67255, 58721, 59906, 51868),
+    "Electricity": (21343, 20508, 20166, 21351, 23684),
+    "Traffic": (15211, 14376, 14107, 15219, 13456),
+    "Weather": (48010, 38983, 46833, 48018, 50351),
+}
+TFM3_V2_SERIES_LENGTHS = {
+    "ETTh1": 17420, "ETTh2": 17420, "ETTm1": 69680, "ETTm2": 69680,
+    "Electricity": 26304, "Traffic": 17544, "Weather": 52696,
+}
+# Models whose recorded ``git_sha`` is always the vendored upstream pin from
+# models/UPSTREAM.json.  The artifact repository vendors every model inside
+# one git tree, so ``git -C models/<repo> rev-parse HEAD`` would report the
+# artifact commit instead of the model's upstream revision (the v2 TimesFM-2.5
+# rows carry the upstream commit 3dae50b).  Scoped to TimesFM-3.0 so running
+# campaigns of the other models keep their run_ids.
+PINNED_PROVENANCE_MODELS = frozenset({TFM3_MODEL})
 
 MODEL_WAVES = {
     wave: tuple(name for name, spec in MODELS.items() if spec.wave == wave)
@@ -317,6 +386,10 @@ def _pinned_upstream_sha(repo: str) -> str | None:
 
 def repo_sha(model: str) -> str:
     spec = MODELS[model]
+    if model in PINNED_PROVENANCE_MODELS:
+        pinned = _pinned_upstream_sha(spec.repo)
+        if pinned:
+            return pinned
     try:
         return run_output(
             ["git", "-C", str(MODELS_ROOT / spec.repo), "rev-parse", "HEAD"]
@@ -327,7 +400,7 @@ def repo_sha(model: str) -> str:
 
 def deployment_sha() -> str:
     digest = hashlib.sha256()
-    for path in sorted(Path(__file__).parent.glob("*.py")):
+    for path in sorted(Path(__file__).resolve().parents[1].rglob("*.py"), key=lambda p: p.as_posix()):
         digest.update(path.name.encode())
         digest.update(path.read_bytes())
     return digest.hexdigest()
@@ -393,7 +466,9 @@ def load_series(dataset: str) -> np.ndarray:
     return series
 
 
-def choose_windows(series_length: int, count: int = 5) -> list[int]:
+def choose_windows(
+    series_length: int, count: int = 5, future_budget: int = W1_MAX_FUTURE
+) -> list[int]:
     """Choose shared W1 forecast endpoints in the last 30% of a series.
 
     ``window_start`` is the first newly observed point (the history ends just
@@ -402,11 +477,11 @@ def choose_windows(series_length: int, count: int = 5) -> list[int]:
     and recorded as ``unsupported`` instead of silently changing the windows.
     """
     low = int(math.ceil(series_length * 0.70))
-    high = series_length - W1_MAX_FUTURE
+    high = series_length - future_budget
     if high < low:
         raise ValueError(
-            f"series length {series_length} has no W1 endpoint in its last 30% "
-            f"with {W1_MAX_FUTURE} future points"
+            f"series length {series_length} has no endpoint in its last 30% "
+            f"with {future_budget} future points"
         )
     windows = []
     for index in range(count):
@@ -454,12 +529,18 @@ def create_manifest(window_count: int, gpu: int) -> dict[str, Any]:
     import torch
     import transformers
 
+    spec = MODELS["timesfm"]
+    budget_main = spec.updates * spec.s + spec.horizon
+    budget_ext = EXT_UPDATES * spec.s + spec.horizon
     windows = {}
+    windows_ext = {}
     lengths = {}
     for dataset in DATASETS:
         series = load_series(dataset)
         lengths[dataset] = int(series.size)
-        windows[dataset] = choose_windows(series.size, window_count)
+        windows[dataset] = choose_windows(series.size, window_count, budget_main)
+        if dataset in EXT_DATASETS:
+            windows_ext[dataset] = choose_windows(series.size, window_count, budget_ext)
     snapshot = gpu_snapshot(gpu)
     manifest = {
         "schema_version": "rolling-kv",
@@ -482,6 +563,9 @@ def create_manifest(window_count: int, gpu: int) -> dict[str, Any]:
         "finished_at": None,
         "seed_base": SEED_BASE,
         "windows": windows,
+        "windows_ext": windows_ext,
+        "future_budget_main": budget_main,
+        "future_budget_ext": budget_ext,
         "series_lengths": lengths,
         "window_start_semantics": "first newly observed point; history is [start-L,start)",
         "other_processes_on_gpu": gpu_processes(gpu),
@@ -503,6 +587,145 @@ def load_manifest() -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"missing {path}; run launch_all.py first")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def tfm3_future_budget() -> int:
+    spec = MODELS[TFM3_MODEL]
+    return spec.updates * spec.s + spec.horizon
+
+
+def tfm3_cell_feasible(
+    window_start: int, context_length: int, series_length: int
+) -> bool:
+    """Protocol feasibility of one (dataset, window, L) cell.
+
+    Mirrors the bounds check in exp1_fixed_policy_sweep.run_quality: the history needs
+    ``start - L >= 0`` and the future needs ``start + U*s + H <= N``.
+    """
+    return (
+        window_start >= context_length
+        and window_start + tfm3_future_budget() <= series_length
+    )
+
+
+def tfm3_unsupported_cells(
+    windows: dict[str, Any],
+    series_lengths: dict[str, int],
+    grid: Iterable[tuple[str, int]],
+) -> list[tuple[str, int, int]]:
+    """Infeasible (dataset, window_index, L) cells of a (dataset, L) grid."""
+    cells = []
+    for dataset, length in grid:
+        for index, start in enumerate(windows[dataset]):
+            if not tfm3_cell_feasible(int(start), int(length), int(series_lengths[dataset])):
+                cells.append((dataset, index, int(length)))
+    return sorted(cells)
+
+
+def create_manifest_tfm3(gpu: int, window_count: int = 5) -> dict[str, Any]:
+    """Write ``RESULTS/manifest.json`` for the TimesFM-3.0 campaign.
+
+    The windows are the v2 manifest's windows verbatim.  They are re-drawn
+    with ``choose_windows(N, 5, U*s+H)`` (U=64, s=32, H=64: the v2 budget)
+    as a reproducibility check; a mismatch is recorded, never substituted.
+    """
+    import pandas as pd
+    import torch
+    import transformers
+
+    spec = MODELS[TFM3_MODEL]
+    budget = tfm3_future_budget()
+    if window_count != 5:
+        raise ValueError("the TimesFM-3.0 campaign reuses the five v2 windows")
+    windows = {name: list(TFM3_V2_WINDOWS[name]) for name in DATASETS}
+    lengths: dict[str, int] = {}
+    redrawn: dict[str, list[int]] = {}
+    mismatch: dict[str, dict[str, Any]] = {}
+    for dataset in DATASETS:
+        series = load_series(dataset)
+        lengths[dataset] = int(series.size)
+        redrawn[dataset] = choose_windows(series.size, window_count, budget)
+        if redrawn[dataset] != windows[dataset]:
+            mismatch[dataset] = {
+                "redrawn": redrawn[dataset],
+                "v2": windows[dataset],
+                "series_length": int(series.size),
+                "v2_series_length": TFM3_V2_SERIES_LENGTHS[dataset],
+            }
+    snapshot = gpu_snapshot(gpu)
+    main_grid = [(name, length) for name in DATASETS for length in spec.lengths]
+    partial_grid = [
+        (name, length)
+        for name in TFM3_PARTIAL_DATASETS
+        for length in TFM3_PARTIAL_LENGTHS
+    ]
+    unsupported = tfm3_unsupported_cells(windows, lengths, main_grid + partial_grid)
+    manifest = {
+        "schema_version": "rolling-kv",
+        "campaign": "timesfm3-v2-protocol",
+        "wave": spec.wave,
+        "git_sha": {
+            "deployment": deployment_sha(),
+            TFM3_MODEL: repo_sha(TFM3_MODEL),
+        },
+        "python": sys.version,
+        "platform": platform.platform(),
+        "torch": torch.__version__,
+        "cuda": torch.version.cuda,
+        "driver": snapshot["driver_version"],
+        "transformers": transformers.__version__,
+        "gpu_index": gpu,
+        "gpu_name": snapshot["name"],
+        "gpu_uuid": snapshot["uuid"],
+        "hostname": socket.gethostname(),
+        "started_at": utc_now(),
+        "finished_at": None,
+        "seed_base": SEED_BASE,
+        "windows": windows,
+        "windows_source": "verbatim v2 manifest windows (results/v2/manifest.json)",
+        "windows_redraw_matches_v2": not mismatch,
+        "windows_redraw_mismatch": mismatch,
+        "future_budget_main": budget,
+        "series_lengths": lengths,
+        "window_start_semantics": "first newly observed point; history is [start-L,start)",
+        "unsupported_cells": [
+            {"dataset": d, "window": w, "L": length} for d, w, length in unsupported
+        ],
+        "other_processes_on_gpu": gpu_processes(gpu),
+        "protocol": {
+            "model": TFM3_MODEL,
+            "display_name": spec.display_name,
+            "dtype": spec.dtype,
+            "batch": 1,
+            "exec": "graph (full and rolling paths both captured CUDA Graphs)",
+            "s": spec.s,
+            "H": spec.horizon,
+            "U": spec.updates,
+            "score_steps": 32,
+            "main_lengths": list(spec.lengths),
+            "main_k_values": list(spec.k_values),
+            "partial_lengths": list(TFM3_PARTIAL_LENGTHS),
+            "partial_k_values": list(TFM3_PARTIAL_K_VALUES),
+            "partial_datasets": list(TFM3_PARTIAL_DATASETS),
+            "exp0_lengths": list(TFM3_ALL_LENGTHS),
+            "exp2_lengths_batch1": list(TFM3_ALL_LENGTHS),
+            "exp2_batch8_length": TFM3_EXP2_BATCH8_LENGTH,
+            "point_forecast": "median quantile (q=0.5) of the H=64 stitched readout",
+            "norm_mode": "running prefix RevIN stats frozen for cached tokens; "
+            "linear-detrend line frozen at refresh",
+        },
+        "protocol_notes": [
+            "Identical to the paper's v2 TimesFM-2.5 protocol (U=64, H=64, s=32, "
+            "FP32, batch 1, CUDA Graph full and rolling paths).",
+            "Per-cell history/future infeasibility is recorded as status=unsupported.",
+            "Positions are monotone absolute (never remapped): pos_remap is n/a.",
+        ],
+        "models": {TFM3_MODEL: spec.__dict__},
+        "datasets": {name: value.__dict__ for name, value in DATASETS.items()},
+        "pandas": pd.__version__,
+    }
+    write_json_atomic(RESULTS / "manifest.json", manifest)
+    return manifest
 
 
 def classify_failure(exc: BaseException) -> str:
